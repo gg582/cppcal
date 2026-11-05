@@ -1,6 +1,6 @@
 import std;
 
-#define NTH_BIT_IS_HIGH(x, n) ((x) & (1<<n))
+#define NTH_BIT_IS_HIGH(x, n) ((x) & (1 << (n)))
 
 const std::string EMPTY_STRING = "";
 const auto DELIMETER = ';';
@@ -20,8 +20,8 @@ std::string trim(const std::string &s) {
     return s.substr(start, substr_endpos);
 }
 
-template <typename T1, typename T2>
-concept CalculableSame = std::same_as<T1, T2> && requires(T1 a, T2 b) {
+template <typename T1, typename T2, typename Op>
+concept CalculableSame = std::same_as<T1, T2> && requires(T1 a, T2 b, Op op) {
     // NOTE: In my opinion, checking + and / will be enough;
     // - can be interpreted as (a) + (-b).
     // * can be interpreted as (a) * (b) == (a) + (a) + (a) + ... b times.
@@ -36,16 +36,17 @@ concept CalculableSame = std::same_as<T1, T2> && requires(T1 a, T2 b) {
     // it's exactly same in C.
     // As a result, we don't need to calculate +, -, *, / in this scope.
     // just checking a, b, and a+b are in a same type will be perfectly okay.
-    {a + b} -> std::same_as<T1>;
+    { op(a, b) } -> std::same_as<T1>;
 };
 
-NumType addNumType(const NumType &l, const NumType &r) {
-    return std::visit([](auto &&a, auto &&b) -> NumType {
+template <typename Op>
+NumType applyBinaryOp(const NumType &l, const NumType &r, Op op) {
+    return std::visit([&op](auto &&a, auto &&b) -> NumType {
         using T1 = std::decay_t<decltype(a)>;
         using T2 = std::decay_t<decltype(b)>;
 
-        if constexpr (CalculableSame<T1, T2>) {
-            return a + b;
+        if constexpr (CalculableSame<T1, T2, Op>) {
+            return op(a, b);
         } else {
             std::cerr << "err: type mismatch" << std::endl;
             std::exit(1);
@@ -53,59 +54,16 @@ NumType addNumType(const NumType &l, const NumType &r) {
     }, l, r);
 }
 
-NumType minusNumType(const NumType &l, const NumType &r) {
-    return std::visit([](auto &&a, auto &&b) -> NumType {
-            using T1 = std::decay_t<decltype(a)>;
-            using T2 = std::decay_t<decltype(b)>;
-
-            if constexpr (CalculableSame<T1, T2>) {
-                return a - b;
-            } else {
-                std::cerr << "err: type mismatch" << std::endl;
-                std::exit(1);
-            }
-    }, l, r);
-}
-
-NumType mulNumType(const NumType &l, const NumType &r) {
-    return std::visit([](auto &&a, auto &&b) -> NumType {
-            using T1 = std::decay_t<decltype(a)>;
-            using T2 = std::decay_t<decltype(b)>;
-
-            if constexpr (CalculableSame<T1, T2>) {
-                return a * b;
-            } else {
-                std::cerr << "err: type mismatch" << std::endl;
-                std::exit(1);
-            }
-    }, l, r);
-}
-
-NumType divNumType(const NumType &l, const NumType &r) {
-    return std::visit([](auto &&a, auto &&b) -> NumType {
-            using T1 = std::decay_t<decltype(a)>;
-            using T2 = std::decay_t<decltype(b)>;
-
-            if constexpr (CalculableSame<T1, T2>) {
-                return a / b;
-            } else {
-                std::cerr << "err: type mismatch" << std::endl;
-                std::exit(1);
-            }
-    }, l, r);
-}
-
 NumType evalOp(std::string tok) {
     tok = trim(tok);
 
     // float(...) expression
-    if (tok.rfind("float(", 0) == 0
-     && tok.back() == ')') {
+    if (tok.rfind("float(", 0) == 0 && tok.back() == ')') {
         std::string inner = tok.substr(6, tok.size() - 7);
         // NOTE: recursive call
         NumType v = evalOp(inner);
         return std::visit([](auto &&val) -> NumType {
-                return static_cast<double>(val);
+            return static_cast<double>(val);
         }, v);
     }
 
@@ -155,37 +113,22 @@ NumType evalExp(const std::string &expr) {
     }
 
     // exp should be 1 here
+    size_t splitPos = std::string::npos;
+    if (NTH_BIT_IS_HIGH(opMask, 0)) splitPos = plusPos;
+    else if (NTH_BIT_IS_HIGH(opMask, 1)) splitPos = minusPos;
+    else if (NTH_BIT_IS_HIGH(opMask, 2)) splitPos = mulPos;
+    else if (NTH_BIT_IS_HIGH(opMask, 3)) splitPos = divPos;
 
-    // lStr '+' rStr
-    if (NTH_BIT_IS_HIGH(opMask, 0)) {
-        std::string lStr = expr.substr(0, plusPos);
-        std::string rStr = expr.substr(plusPos + 1);
-        // interpret them a number, evalOp will determine if it's double or long long
-        // so it's basically x+y;
-        return addNumType(evalOp(lStr),
-                          evalOp(rStr));
-    }
+    std::string lStr = expr.substr(0, splitPos);
+    std::string rStr = expr.substr(splitPos + 1);
 
-    if (NTH_BIT_IS_HIGH(opMask, 1)) {
-        std::string lStr = expr.substr(0, minusPos);
-        std::string rStr = expr.substr(minusPos + 1);
-        return minusNumType(evalOp(lStr),
-                            evalOp(rStr));
-    }
+    NumType lhs = evalOp(lStr);
+    NumType rhs = evalOp(rStr);
 
-    if (NTH_BIT_IS_HIGH(opMask, 2)) {
-        std::string lStr = expr.substr(0, mulPos);
-        std::string rStr = expr.substr(mulPos + 1);
-        return mulNumType(evalOp(lStr),
-                          evalOp(rStr));
-    }
-
-    if (NTH_BIT_IS_HIGH(opMask, 3)) {
-        std::string lStr = expr.substr(0, divPos);
-        std::string rStr = expr.substr(divPos + 1);
-        return divNumType(evalOp(lStr),
-                          evalOp(rStr));
-    }
+    if (NTH_BIT_IS_HIGH(opMask, 0)) return applyBinaryOp(lhs, rhs, std::plus<>{});
+    if (NTH_BIT_IS_HIGH(opMask, 1)) return applyBinaryOp(lhs, rhs, std::minus<>{});
+    if (NTH_BIT_IS_HIGH(opMask, 2)) return applyBinaryOp(lhs, rhs, std::multiplies<>{});
+    if (NTH_BIT_IS_HIGH(opMask, 3)) return applyBinaryOp(lhs, rhs, std::divides<>{});
 
     return evalOp(expr);
 }
@@ -193,7 +136,7 @@ NumType evalExp(const std::string &expr) {
 void execStatement(const std::string &raw) {
     std::string stmt = trim(raw);
 
-    if(stmt.empty()) return;
+    if (stmt.empty()) return;
 
     // NOTE: print statement is not guarded.
     // for example, print x is fine.
@@ -201,13 +144,14 @@ void execStatement(const std::string &raw) {
     if (stmt.rfind("print", 0) == 0) {
         std::string target = trim(stmt.substr(5));
 
-        if(!vars.contains(target)) {
+        if (!vars.contains(target)) {
             std::cerr << "err: undefined variable" << std::endl;
             std::exit(1);
         }
 
         std::visit([](auto &&val) {
-            std::cout << val << std::endl; }, vars[target]);
+            std::cout << val << std::endl;
+        }, vars[target]);
         return;
     }
 
@@ -226,10 +170,10 @@ void execStatement(const std::string &raw) {
     vars[var_name] = evalExp(expr);
 }
 
-int main(int argc, char ** argv) {
+int main(int argc, char **argv) {
     if (argc < 2) {
         std::cerr << "usage: ./cppcal \"syntax1;syntax2;\"" << std::endl;
-        std::cerr << "example: ./cppcal a=float(10);b=10.2;c=a+b;print c";
+        std::cerr << "example: ./cppcal \"a=float(10);b=10.2;c=a+b;print c\"" << std::endl;
         return 1;
     }
 
@@ -242,7 +186,7 @@ int main(int argc, char ** argv) {
     // it will return an error.
     auto it = std::find(alreadyUsed.begin(), alreadyUsed.end(), DELIMETER);
 
-    if(it != alreadyUsed.end()) return 1;
+    if (it != alreadyUsed.end()) return 1;
     while (std::getline(ss, stmt, DELIMETER)) {
         execStatement(stmt);
     }
