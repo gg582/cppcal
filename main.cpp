@@ -22,7 +22,7 @@ std::string trim(const std::string &s) {
 
 template <typename T1, typename T2>
 concept CalculableSame = std::same_as<T1, T2> && requires(T1 a, T2 b) {
-    // NOTE: In my opinion, checking + and / will be enough/
+    // NOTE: In my opinion, checking + and / will be enough;
     // - can be interpreted as (a) + (-b).
     // * can be interpreted as (a) * (b) == (a) + (a) + (a) + ... b times.
     // and if a + b has a same type, b definitely has a same type.
