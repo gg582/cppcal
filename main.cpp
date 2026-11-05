@@ -1,6 +1,8 @@
 import std;
 
-#define NTH_BIT_IS_HIGH(x, n) ((x) & (1 << (n)))
+constexpr auto nth_bit_is_high = [](unsigned int x, unsigned int n) constexpr noexcept -> bool {
+    return (x & (1u << n)) != 0;
+};
 
 const std::string EMPTY_STRING = "";
 const auto DELIMETER = ';';
@@ -22,30 +24,19 @@ std::string trim(const std::string &s) {
 
 template <typename T1, typename T2, typename Op>
 concept CalculableSame = std::same_as<T1, T2> && requires(T1 a, T2 b, Op op) {
-    // NOTE: In my opinion, checking + and / will be enough;
-    // - can be interpreted as (a) + (-b).
-    // * can be interpreted as (a) * (b) == (a) + (a) + (a) + ... b times.
-    // and if a + b has a same type, b definitely has a same type.
-    // so (a) * (b) won't be in a wrong result.
-    // But a / b is kinda confusing.
-    // if we think about a = 1;b = 3;
-    //
-    // we guess that c = a / b; should be 0.333333333333333314829616256247390992939472198486328125,
-    // But C++ doesn't care if its mathematical value is an integer or not,
-    // so it's interpreted as ZERO by its language spec.
-    // it's exactly same in C.
-    // As a result, we don't need to calculate +, -, *, / in this scope.
-    // just checking a, b, and a+b are in a same type will be perfectly okay.
+    // Requires that T1 and T2 are identical types,
+    // and invoking op(a, b) yields the same type T1 without implicit conversion.
     { op(a, b) } -> std::same_as<T1>;
 };
 
 template <typename Op>
 NumType applyBinaryOp(const NumType &l, const NumType &r, Op op) {
-    return std::visit([&op](auto &&a, auto &&b) -> NumType {
+    return std::visit([op](auto &&a, auto &&b) -> NumType {
         using T1 = std::decay_t<decltype(a)>;
         using T2 = std::decay_t<decltype(b)>;
+        using CleanOp = std::decay_t<Op>;
 
-        if constexpr (CalculableSame<T1, T2, Op>) {
+        if constexpr (CalculableSame<T1, T2, CleanOp>) {
             return op(a, b);
         } else {
             std::cerr << "err: type mismatch" << std::endl;
@@ -54,14 +45,16 @@ NumType applyBinaryOp(const NumType &l, const NumType &r, Op op) {
     }, l, r);
 }
 
+NumType evalExp(const std::string &rawExpr);
+
 NumType evalOp(std::string tok) {
     tok = trim(tok);
 
     // float(...) expression
-    if (tok.rfind("float(", 0) == 0 && tok.back() == ')') {
+    if (tok.size() >= 7 && tok.rfind("float(", 0) == 0 && tok.back() == ')') {
         std::string inner = tok.substr(6, tok.size() - 7);
         // NOTE: recursive call
-        NumType v = evalOp(inner);
+        NumType v = evalExp(inner);
         return std::visit([](auto &&val) -> NumType {
             return static_cast<double>(val);
         }, v);
@@ -81,13 +74,31 @@ NumType evalOp(std::string tok) {
     return std::stoll(tok);
 }
 
-NumType evalExp(const std::string &expr) {
-    auto plusPos = expr.find('+');
-    auto minusPos = expr.find('-');
-    auto mulPos = expr.find('*');
-    auto divPos = expr.find('/');
+NumType evalExp(const std::string &rawExpr) {
+    std::string expr = trim(rawExpr);
 
-    int opMask = 0;
+    // Scan for top-level binary operators outside parentheses
+    int parenDepth = 0;
+    size_t plusPos = std::string::npos;
+    size_t minusPos = std::string::npos;
+    size_t mulPos = std::string::npos;
+    size_t divPos = std::string::npos;
+
+    for (size_t i = 0; i < expr.size(); ++i) {
+        char ch = expr[i];
+        if (ch == '(') {
+            parenDepth++;
+        } else if (ch == ')') {
+            parenDepth--;
+        } else if (parenDepth == 0) {
+            if (ch == '+') plusPos = i;
+            else if (ch == '-') minusPos = i;
+            else if (ch == '*') mulPos = i;
+            else if (ch == '/') divPos = i;
+        }
+    }
+
+    unsigned int opMask = 0;
 
     /** NOTE: This should handle only one expression per execution
      * =======OPERATION TABLE===========
@@ -100,10 +111,10 @@ NumType evalExp(const std::string &expr) {
      * |     /     | 3rd |
      *
      * ================================= */
-    opMask = plusPos  != std::string::npos ? opMask | (1 << 0) : opMask;
-    opMask = minusPos != std::string::npos ? opMask | (1 << 1) : opMask;
-    opMask = mulPos   != std::string::npos ? opMask | (1 << 2) : opMask;
-    opMask = divPos   != std::string::npos ? opMask | (1 << 3) : opMask;
+    opMask = plusPos  != std::string::npos ? opMask | (1u << 0) : opMask;
+    opMask = minusPos != std::string::npos ? opMask | (1u << 1) : opMask;
+    opMask = mulPos   != std::string::npos ? opMask | (1u << 2) : opMask;
+    opMask = divPos   != std::string::npos ? opMask | (1u << 3) : opMask;
 
     if (!opMask) return evalOp(expr);
 
@@ -112,23 +123,29 @@ NumType evalExp(const std::string &expr) {
         std::exit(1);
     }
 
-    // exp should be 1 here
     size_t splitPos = std::string::npos;
-    if (NTH_BIT_IS_HIGH(opMask, 0)) splitPos = plusPos;
-    else if (NTH_BIT_IS_HIGH(opMask, 1)) splitPos = minusPos;
-    else if (NTH_BIT_IS_HIGH(opMask, 2)) splitPos = mulPos;
-    else if (NTH_BIT_IS_HIGH(opMask, 3)) splitPos = divPos;
+    if (nth_bit_is_high(opMask, 0)) splitPos = plusPos;
+    else if (nth_bit_is_high(opMask, 1)) splitPos = minusPos;
+    else if (nth_bit_is_high(opMask, 2)) splitPos = mulPos;
+    else if (nth_bit_is_high(opMask, 3)) splitPos = divPos;
 
     std::string lStr = expr.substr(0, splitPos);
     std::string rStr = expr.substr(splitPos + 1);
 
-    NumType lhs = evalOp(lStr);
-    NumType rhs = evalOp(rStr);
+    NumType lhs = evalExp(lStr);
+    NumType rhs = evalExp(rStr);
 
-    if (NTH_BIT_IS_HIGH(opMask, 0)) return applyBinaryOp(lhs, rhs, std::plus<>{});
-    if (NTH_BIT_IS_HIGH(opMask, 1)) return applyBinaryOp(lhs, rhs, std::minus<>{});
-    if (NTH_BIT_IS_HIGH(opMask, 2)) return applyBinaryOp(lhs, rhs, std::multiplies<>{});
-    if (NTH_BIT_IS_HIGH(opMask, 3)) return applyBinaryOp(lhs, rhs, std::divides<>{});
+    if (nth_bit_is_high(opMask, 0)) return applyBinaryOp(lhs, rhs, std::plus<>{});
+    if (nth_bit_is_high(opMask, 1)) return applyBinaryOp(lhs, rhs, std::minus<>{});
+    if (nth_bit_is_high(opMask, 2)) return applyBinaryOp(lhs, rhs, std::multiplies<>{});
+    if (nth_bit_is_high(opMask, 3)) {
+        bool isZero = std::visit([](auto &&v) { return v == 0; }, rhs);
+        if (isZero) {
+            std::cerr << "err: division by zero" << std::endl;
+            std::exit(1);
+        }
+        return applyBinaryOp(lhs, rhs, std::divides<>{});
+    }
 
     return evalOp(expr);
 }
