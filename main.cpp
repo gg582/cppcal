@@ -53,7 +53,6 @@ NumType evalOp(std::string tok) {
     // float(...) expression
     if (tok.size() >= 7 && tok.rfind("float(", 0) == 0 && tok.back() == ')') {
         std::string inner = tok.substr(6, tok.size() - 7);
-        // NOTE: recursive call
         NumType v = evalExp(inner);
         return std::visit([](auto &&val) -> NumType {
             return static_cast<double>(val);
